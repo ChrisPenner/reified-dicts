@@ -16,6 +16,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 
 module Reify where
 
@@ -30,6 +31,7 @@ import Data.Generics.Product
 import GHC.Natural
 import GHC.Generics
 import Control.Applicative
+import Data.Maybe
 
 type family AllC (c :: k -> Constraint) (xs :: [k]) :: Constraint where
   AllC c '[] =  ()
@@ -42,7 +44,7 @@ type family Contained x xs where
 
 
 class Reified k where
-  type Val k :: Type
+  type Val k = result | result -> k
   type Proofs k :: (k -> Constraint)
   reify :: Val k -> (forall (s :: k). (Proofs k s) => Proxy s -> r) -> r
   rEq :: (Proofs k a, Proofs k b) => Proxy (a :: k) -> Proxy (b :: k) -> Maybe (a :~: b)
@@ -65,3 +67,21 @@ instance Reified Nat where
       go (SomeNat p) = f p
   rEq = sameNat
 
+
+checkMatch :: forall o r. Reified k => (Proofs k o) => Proxy (o :: k) -> Val k -> Bool
+checkMatch o s = reify @k s go
+  where
+    go :: forall s. Proofs k s => Proxy s -> Bool
+    go p = isJust $ rEq p o
+
+class (Reified k) => CheckEach (c :: k -> Constraint) (xs :: [k]) where
+  findMatch :: Alternative f => (forall x. c x => Proxy x -> r) -> Val k -> f r
+
+instance Reified k => CheckEach c ('[] :: [k]) where
+  findMatch _ _ = empty
+
+instance (CheckEach c xs, AllC (Proofs k) (x:xs), AllC c (x:xs)) => CheckEach c ((x:xs) :: [k]) where
+  findMatch f s =
+      if checkMatch (Proxy @x) s
+         then pure $ f (Proxy @x)
+         else findMatch @k @c @xs f s

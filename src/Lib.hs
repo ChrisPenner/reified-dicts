@@ -32,28 +32,9 @@ import GHC.Natural
 import GHC.Generics
 import Control.Applicative
 import Data.Maybe
--- HasField' o MyType String
-
-checkMatch :: forall o r. Reified k => (Proofs k o) => Proxy (o :: k) -> Val k -> Bool
-checkMatch o s = reify @k s go
-  where
-    go :: forall s. Proofs k s => Proxy s -> Bool
-    go p = isJust $ rEq p o
 
 class (HasField' fieldName t String) => HasFieldX t (fieldName :: Symbol)
 instance (HasField' fieldName t String) => HasFieldX t fieldName
-
-class (Reified k) => CheckEach (c :: k -> Constraint) (xs :: [k]) where
-  findMatch :: Alternative f => (forall x. c x => Proxy x -> r) -> Val k -> f r
-
-instance Reified k => CheckEach c ('[] :: [k]) where
-  findMatch _ _ = empty
-
-instance (CheckEach c xs, AllC (Proofs k) (x:xs), AllC c (x:xs)) => CheckEach c ((x:xs) :: [k]) where
-  findMatch f s =
-      if checkMatch (Proxy @x) s
-         then pure $ f (Proxy @x)
-         else findMatch @k @c @xs f s
 
 data MyType = MyType {name :: String, blah :: String} deriving Generic
 
