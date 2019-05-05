@@ -19,57 +19,49 @@
 
 module Lib where
 
+import Reify
 import Control.Lens
 import Data.Kind
 import Data.Typeable
 import Data.GenericLens.Internal
 import Data.Constraint
-import GHC.TypeLits
+import GHC.TypeLits hiding (someNatVal)
+import GHC.TypeNats
 import Data.Generics.Product
+import GHC.Natural
 import GHC.Generics
 import Control.Applicative
+import Data.Maybe
+-- HasField' o MyType String
 
-type family AllC (c :: k -> Constraint) (xs :: [k]) :: Constraint where
-  AllC c '[] =  ()
-  AllC c (x : rest) = (c x, AllC c rest)
+checkMatch :: forall o r. Reified k => (Proofs k o) => Proxy (o :: k) -> Val k -> Bool
+checkMatch o s = reify @k s go
+  where
+    go :: forall s. Proofs k s => Proxy s -> Bool
+    go p = isJust $ rEq p o
 
-class (KnownSymbol o) => GetProof typ o where
-  getProof :: forall fieldName. KnownSymbol fieldName => Proxy fieldName -> Proxy o -> Maybe (fieldName :~: o)
+class (HasField' fieldName t String) => HasFieldX t (fieldName :: Symbol)
+instance (HasField' fieldName t String) => HasFieldX t fieldName
 
-instance ( KnownSymbol o
-         , KnownSymbol fieldName
-         , Contained o (CollectFieldsOrdered (Rep MyType))
-         ) => GetProof MyType o where
-    getProof = sameSymbol
+class (Reified k) => CheckEach (c :: k -> Constraint) (xs :: [k]) where
+  findMatch :: Alternative f => (forall x. c x => Proxy x -> r) -> Val k -> f r
 
-type family Contained x xs where
-  Contained x '[] = False ~ True
-  Contained x (x:_) = ()
-  Contained x (_:xs) = Contained x xs
+instance Reified k => CheckEach c ('[] :: [k]) where
+  findMatch _ _ = empty
 
-run :: forall o. (KnownSymbol o, HasField' o MyType String) => Proxy o -> String -> Maybe (MyType -> String)
-run o s = case someSymbolVal s of
-    SomeSymbol x -> case sameSymbol x o of
-        Just Refl -> Just (getField @o)
-        Nothing -> Nothing
-
-r = run (Proxy @"name") "name"
-
-class (AllC KnownSymbol xs) => TryAll xs where
-  tryIt :: String -> Maybe (MyType -> String)
-
-instance TryAll '[] where
-  tryIt _ = Nothing
-
-instance (TryAll xs, AllC KnownSymbol (x:xs), HasField' x MyType String) => TryAll (x:xs) where
-  tryIt s = run (Proxy @x) s <|> tryIt @xs s
+instance (CheckEach c xs, AllC (Proofs k) (x:xs), AllC c (x:xs)) => CheckEach c ((x:xs) :: [k]) where
+  findMatch f s =
+      if checkMatch (Proxy @x) s
+         then pure $ f (Proxy @x)
+         else findMatch @k @c @xs f s
 
 data MyType = MyType {name :: String, blah :: String} deriving Generic
 
+exType :: MyType
 exType = MyType "my name" "my blah"
 
-result :: String -> Maybe (MyType -> String)
-result = tryIt @(CollectFieldsOrdered (Rep MyType))
-
-getter ::  MyType -> String -> Maybe String
-getter t s = fmap ($t) (tryIt @(CollectFieldsOrdered (Rep MyType)) s)
+mkGetter :: String -> Maybe (MyType -> String)
+mkGetter s = findMatch @Symbol @(HasFieldX MyType) @'["name"] getField' s
+  where
+    getField' :: forall x. (HasFieldX MyType x) => Proxy x -> (MyType -> String)
+    getField' _ = getField @x
